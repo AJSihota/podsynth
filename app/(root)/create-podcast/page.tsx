@@ -103,7 +103,7 @@ const CreatePodcast = () => {
     } catch (error) {
       console.log(error);
       toast({
-        title: 'Error',
+        title: 'Generating content... Please wait',
         variant: 'destructive',
       })
       setIsSubmitting(false);
