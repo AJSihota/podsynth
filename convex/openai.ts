@@ -3,6 +3,8 @@ import { v } from "convex/values";
 
 import OpenAI from "openai";
 import { SpeechCreateParams } from "openai/resources/audio/speech.mjs";
+import ffmpeg from 'fluent-ffmpeg';
+import { Readable } from 'stream';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -75,11 +77,37 @@ export const generateAudioAction = action({
     }));
 
     // Concatenate the audio buffers into one podcast
-    const finalPodcast = concatenateAudioBuffers(audioBuffers);
+    const fullAudioBuffer = concatenateAudioBuffers(audioBuffers);
 
-    return finalPodcast;
+    // Compress the audio
+    const compressedAudio = await compressAudio(fullAudioBuffer);
+
+    return compressedAudio;
   },
 });
+
+// Helper function to compress audio using ffmpeg
+async function compressAudio(buffer: ArrayBuffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const inputStream = new Readable();
+    inputStream.push(Buffer.from(buffer));
+    inputStream.push(null);
+
+    let outputBuffer = Buffer.alloc(0);
+
+    ffmpeg(inputStream)
+      .audioCodec('libmp3lame')
+      .audioBitrate(64) // Adjust bitrate as needed
+      .audioChannels(1) // Mono audio
+      .audioFrequency(22050) // Lower sample rate
+      .format('mp3')
+      .on('error', reject)
+      .on('end', (chunk: any) => {
+        outputBuffer = Buffer.concat([outputBuffer, chunk]);
+      })
+      .on('end', () => resolve(outputBuffer));
+  });
+}
 
 // Helper function to split text into chunks of a specific length
 function splitTextIntoChunks(text: string, maxLength: number): string[] {
