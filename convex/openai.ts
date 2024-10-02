@@ -3,8 +3,6 @@ import { v } from "convex/values";
 
 import OpenAI from "openai";
 import { SpeechCreateParams } from "openai/resources/audio/speech.mjs";
-import ffmpeg from 'fluent-ffmpeg';
-import { Readable } from 'stream';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -30,19 +28,19 @@ export const generatePodcastScript = action({
   handler: async (_, { input }) => {
     const introText = await openai.completions.create({
       model: "gpt-3.5-turbo-instruct",
-      prompt: `${input} Write an introduction for a podcast.`,
+      prompt: `${input} Write an introduction for a podcast. Keep it short and engaging.`,
       max_tokens: 500, // Generate longer text for the intro
     });
 
     const mainText = await openai.completions.create({
       model: "gpt-3.5-turbo-instruct",
-      prompt: `${input} Main discussion content for the podcast.`,
+      prompt: `${input} Main discussion content for the podcast. Keep it short, informative and engaging.`,
       max_tokens: 1500, // Generate the bulk of the content
     });
 
     const conclusionText = await openai.completions.create({
       model: "gpt-3.5-turbo-instruct",
-      prompt: `${input} Write a conclusion for a podcast.`,
+      prompt: `${input} Write a conclusion for a podcast. Keep it short and engaging.`,
       max_tokens: 500,
     });
 
@@ -53,6 +51,8 @@ export const generatePodcastScript = action({
     };
   },
 });
+
+const MAX_SIZE = 5 * 1024 * 1024; // 7.5MB to leave some buffer
 
 export const generateAudioAction = action({
   args: { input: v.string(), voice: v.string() },
@@ -66,48 +66,33 @@ export const generateAudioAction = action({
     // Split the script into chunks under 4096 characters
     const textChunks = splitTextIntoChunks(fullScript, 4096);
 
-    // Generate audio for each chunk and combine buffers
-    const audioBuffers = await Promise.all(textChunks.map(async (chunk) => {
+    let totalSize = 0;
+    const audioChunks = [];
+
+    for (const chunk of textChunks) {
       const mp3 = await openai.audio.speech.create({
         model: "tts-1",
         voice: voice as SpeechCreateParams['voice'],
         input: chunk,
       });
-      return await mp3.arrayBuffer();
-    }));
+      
+      const buffer = await mp3.arrayBuffer();
+      
+      if (totalSize + buffer.byteLength > MAX_SIZE) {
+        // If adding this chunk would exceed the limit, stop processing
+        break;
+      }
 
-    // Concatenate the audio buffers into one podcast
-    const fullAudioBuffer = concatenateAudioBuffers(audioBuffers);
+      audioChunks.push(buffer);
+      totalSize += buffer.byteLength;
+    }
 
-    // Compress the audio
-    const compressedAudio = await compressAudio(fullAudioBuffer);
+    // Concatenate the audio buffers
+    const finalPodcast = concatenateAudioBuffers(audioChunks);
 
-    return compressedAudio;
+    return finalPodcast;
   },
 });
-
-// Helper function to compress audio using ffmpeg
-async function compressAudio(buffer: ArrayBuffer): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const inputStream = new Readable();
-    inputStream.push(Buffer.from(buffer));
-    inputStream.push(null);
-
-    let outputBuffer = Buffer.alloc(0);
-
-    ffmpeg(inputStream)
-      .audioCodec('libmp3lame')
-      .audioBitrate(64) // Adjust bitrate as needed
-      .audioChannels(1) // Mono audio
-      .audioFrequency(22050) // Lower sample rate
-      .format('mp3')
-      .on('error', reject)
-      .on('end', (chunk: any) => {
-        outputBuffer = Buffer.concat([outputBuffer, chunk]);
-      })
-      .on('end', () => resolve(outputBuffer));
-  });
-}
 
 // Helper function to split text into chunks of a specific length
 function splitTextIntoChunks(text: string, maxLength: number): string[] {
@@ -138,7 +123,6 @@ function concatenateAudioBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
 
   return result.buffer;
 }
-
 
 
 
